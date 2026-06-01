@@ -1,9 +1,9 @@
 plugins {
-    id(libs.plugins.android.application)
-    id(libs.plugins.kotlin.compose)
-    id(libs.plugins.google.devtools.ksp)
-    id(libs.plugins.roborazzi)
-    id(libs.plugins.secrets)
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.google.devtools.ksp)
+    alias(libs.plugins.roborazzi)
+    alias(libs.plugins.secrets)
 }
 
 android {
