@@ -615,7 +615,7 @@ fun BrowseCatalogScreen(viewModel: MainViewModel) {
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filteredEntries, key = { it.id }) { word ->
+                items(filteredEntries, key = { "${it.id}_${it.normalizedWord}" }) { word ->
                     WordItemCard(word = word, onClick = { viewModel.selectWord(word) })
                 }
             }
@@ -732,7 +732,7 @@ fun SearchScreen(viewModel: MainViewModel) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
-                    items(searchResults, key = { it.id }) { word ->
+                    items(searchResults, key = { "${it.id}_${it.normalizedWord}" }) { word ->
                         WordItemCard(word = word, onClick = { viewModel.selectWord(word) })
                     }
                 }
@@ -812,7 +812,7 @@ fun LibraryScreen(viewModel: MainViewModel) {
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(favorites, key = { it.id }) { word ->
+                    items(favorites, key = { "${it.id}_${it.normalizedWord}" }) { word ->
                         WordItemCard(word = word, onClick = { viewModel.selectWord(word) })
                     }
                 }
@@ -887,7 +887,7 @@ fun LibraryScreen(viewModel: MainViewModel) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(bottom = 12.dp)
                     ) {
-                        items(history, key = { it.id }) { word ->
+                        items(history, key = { "${it.id}_${it.normalizedWord}" }) { word ->
                             WordItemCard(word = word, onClick = { viewModel.selectWord(word) })
                         }
                     }
@@ -905,7 +905,7 @@ fun WordItemCard(word: DictionaryEntry, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("word_card_${word.id}")
+            .testTag("word_card_${if (word.id > 0) word.id else word.normalizedWord}")
             .clickable { onClick() },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)

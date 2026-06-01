@@ -1,4 +1,13 @@
+# Force LF on scripts to prevent execute errors on Linux/Unix environments
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Force CRLF on Windows files
+*.bat text eol=crlf
+
+# Treat binary files strictly as binary to prevent Git corrupting them
 *.jar binary
+gradle/wrapper/gradle-wrapper.jar binary
 *.png binary
 *.jpg binary
 *.webp binary
