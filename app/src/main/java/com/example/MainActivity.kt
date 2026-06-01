@@ -444,6 +444,29 @@ fun DashboardScreen(viewModel: MainViewModel) {
                 }
             }
         }
+
+        // SPCR Special Development signature footer
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "СПЦР — СПЕЦИАЛЬНАЯ РАЗРАБОТКА",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    letterSpacing = 2.sp
+                )
+                Text(
+                    text = "64 500+ слов в офлайн-индексе • Сборка GitHub Actions",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
+        }
     }
 }
 

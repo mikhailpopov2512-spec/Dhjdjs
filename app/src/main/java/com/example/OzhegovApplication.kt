@@ -10,5 +10,5 @@ class OzhegovApplication : Application() {
     val applicationScope = CoroutineScope(SupervisorJob())
 
     val database by lazy { DictionaryDatabase.getDatabase(this, applicationScope) }
-    val repository by lazy { DictionaryRepository(database.dictionaryDao()) }
+    val repository by lazy { DictionaryRepository(database.dictionaryDao(), assets) }
 }

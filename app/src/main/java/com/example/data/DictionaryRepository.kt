@@ -2,7 +2,21 @@ package com.example.data
 
 import kotlinx.coroutines.flow.Flow
 
-class DictionaryRepository(private val dao: DictionaryDao) {
+class DictionaryRepository(
+    private val dao: DictionaryDao,
+    private val assets: android.content.res.AssetManager
+) {
+
+    val offlineWordIndex: List<String> by lazy {
+        try {
+            assets.open("words.txt").bufferedReader().useLines { lines ->
+                lines.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toList()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
 
     val allEntries: Flow<List<DictionaryEntry>> = dao.getAllEntries()
     val favorites: Flow<List<DictionaryEntry>> = dao.getFavorites()
