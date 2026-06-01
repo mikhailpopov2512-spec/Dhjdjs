@@ -1,0 +1,6 @@
+{
+  "name": "Словарь Ожегова",
+  "description": "Толковый словарь русского языка С. И. Ожегова с быстрым поиском, избранным, историей и AI-помощником для подробных объяснений слов.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
