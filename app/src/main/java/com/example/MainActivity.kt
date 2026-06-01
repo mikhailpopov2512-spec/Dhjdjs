@@ -44,6 +44,8 @@ import com.example.ui.MainViewModelFactory
 import com.example.ui.theme.MyApplicationTheme
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
 
@@ -75,6 +77,7 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
     val selectedWord by viewModel.selectedWord.collectAsStateWithLifecycle()
     val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
     val aiError by viewModel.aiError.collectAsStateWithLifecycle()
+    var showAddWordDialog by remember { mutableStateOf(false) }
 
     // Handle back press to exit word details dynamically (BackHandler as mandated)
     BackHandler(enabled = selectedWord != null) {
@@ -133,6 +136,18 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
                     }
                 }
             )
+        },
+        floatingActionButton = {
+            if (currentTab != "settings") {
+                FloatingActionButton(
+                    onClick = { showAddWordDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.testTag("fab_add_word")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = "Добавить слово")
+                }
+            }
         },
         bottomBar = {
             NavigationBar(
@@ -235,6 +250,101 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
                             Text("Понятно", color = MaterialTheme.colorScheme.primary)
                         }
                     }
+                )
+            }
+
+            // Custom Dialog for Manual Word Addition
+            if (showAddWordDialog) {
+                var wordInput by remember { mutableStateOf("") }
+                var definitionInput by remember { mutableStateOf("") }
+                val context = LocalContext.current
+
+                AlertDialog(
+                    onDismissRequest = { showAddWordDialog = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Добавить новое слово",
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            )
+                        }
+                    },
+                    text = {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Слово будет сохранено в базу данных и будет доступно офлайн при последующих запусках приложения.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            OutlinedTextField(
+                                value = wordInput,
+                                onValueChange = { wordInput = it },
+                                label = { Text("Слово") },
+                                placeholder = { Text("например: КУДЕСНИК") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().testTag("add_word_input_field")
+                            )
+
+                            OutlinedTextField(
+                                value = definitionInput,
+                                onValueChange = { definitionInput = it },
+                                label = { Text("Толкование (описание)") },
+                                placeholder = { Text("например: Волшебник, колдун, чародей.") },
+                                minLines = 3,
+                                maxLines = 6,
+                                modifier = Modifier.fillMaxWidth().testTag("add_definition_input_field")
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val trimmedWord = wordInput.trim()
+                                val trimmedDef = definitionInput.trim()
+                                if (trimmedWord.isEmpty() || trimmedDef.isEmpty()) {
+                                    Toast.makeText(context, "Заполните все разделы", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                viewModel.saveUserWord(
+                                    word = trimmedWord,
+                                    definition = trimmedDef,
+                                    onSuccess = {
+                                        showAddWordDialog = false
+                                        Toast.makeText(context, "Слово «${trimmedWord.uppercase(Locale.getDefault())}» успешно сохранено!", Toast.LENGTH_LONG).show()
+                                    },
+                                    onError = { error ->
+                                        Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.testTag("submit_user_word_btn")
+                        ) {
+                            Text("Сохранить", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { showAddWordDialog = false },
+                            modifier = Modifier.testTag("dismiss_user_word_btn")
+                        ) {
+                            Text("Отмена", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    modifier = Modifier.testTag("add_word_dialog")
                 )
             }
         }
@@ -1193,6 +1303,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
     val importStatus by viewModel.importStatus.collectAsStateWithLifecycle()
     val allEntries by viewModel.repository.allEntries.collectAsStateWithLifecycle(initialValue = emptyList())
+    val isAdminLoggedIn by viewModel.isAdminLoggedIn.collectAsStateWithLifecycle()
+    val isOzhegovStrictnessEnabled by viewModel.isOzhegovStrictnessEnabled.collectAsStateWithLifecycle()
+    val userAddedEntries by viewModel.userAddedEntries.collectAsStateWithLifecycle()
+
+    var adminPasswordInput by remember { mutableStateOf("") }
+    var loginErrorMsg by remember { mutableStateOf<String?>(null) }
+    var customApiKeyInput by remember { mutableStateOf(viewModel.getCustomApiKey()) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1363,6 +1480,265 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
                 ) {
                     Text("Очистить историю просмотров", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // Admin Access Section Card
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("admin_settings_card"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isAdminLoggedIn) "Панель администратора СПЦР" else "Вход администратора",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (!isAdminLoggedIn) {
+                    Text(
+                        text = "Вход в защищенный режим администрирования для детальной конфигурации ИИ-Толкователя и прямого управления базой данных (Пароль по умолчанию: admin).",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = adminPasswordInput,
+                        onValueChange = { 
+                            adminPasswordInput = it
+                            loginErrorMsg = null
+                        },
+                        label = { Text("Пароль администратора") },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth().testTag("admin_password_field")
+                    )
+
+                    loginErrorMsg?.let { error ->
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            val success = viewModel.logInAdmin(adminPasswordInput)
+                            if (success) {
+                                adminPasswordInput = ""
+                                customApiKeyInput = viewModel.getCustomApiKey()
+                                loginErrorMsg = null
+                            } else {
+                                loginErrorMsg = "Неверный пароль администратора. Попробуйте еще раз."
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("admin_login_submit_btn"),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Авторизоваться", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    // Admin Panel Controls
+                    Text(
+                        text = "Вы авторизованы как администратор. Настройки ниже влияют на поведение приложения у всех пользователей.",
+                        fontSize = 12.sp,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // 1. Strictness Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Строгий режим С.И. Ожегова",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Запрещает генерацию определений с помощью ИИ. Допускается только классическая офлайн-база.",
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = isOzhegovStrictnessEnabled,
+                            onCheckedChange = { viewModel.setStrictnessMode(it) },
+                            modifier = Modifier.testTag("admin_strictness_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 2. Custom API Key input
+                    Text(
+                        text = "Секретный API Ключ Gemini",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Позволяет переопределить API ключ ИИ-Толкователя без пересборки приложения.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = customApiKeyInput,
+                        onValueChange = { customApiKeyInput = it },
+                        placeholder = { Text("AIzaSy...") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_custom_api_key_field")
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            viewModel.setCustomApiKey(customApiKeyInput)
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        modifier = Modifier.fillMaxWidth().testTag("admin_save_api_key_btn")
+                    ) {
+                        Text("Сохранить ключ в памяти", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 3. User Word Moderation Section
+                    Text(
+                        text = "Модерация пользовательской базы",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Добавлено слов вручную или через ИИ: ${userAddedEntries.size}. Ниже вы можете удалять добавленные слова из базы.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    if (userAddedEntries.isEmpty()) {
+                        Text(
+                            text = "Пользователи еще не добавляли слов.",
+                            fontSize = 12.sp,
+                            fontStyle = FontStyle.Italic,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    } else {
+                        // Small scrollable tray of user items
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.background)
+                                .padding(4.dp)
+                        ) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                items(userAddedEntries) { item ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = item.word,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = item.definition,
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { viewModel.deleteEntryAdmin(item.id) },
+                                            modifier = Modifier.size(28.dp).testTag("delete_user_word_${item.id}")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Удалить",
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedButton(
+                            onClick = { viewModel.clearAllUserWordsAdmin() },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth().testTag("admin_clear_all_custom_words_btn"),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Удалить ВСЕ добавленные слова", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 4. Logout admin session
+                    OutlinedButton(
+                        onClick = { viewModel.logOutAdmin() },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("admin_logout_btn"),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    ) {
+                        Text("Выйти из настроек администратора", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

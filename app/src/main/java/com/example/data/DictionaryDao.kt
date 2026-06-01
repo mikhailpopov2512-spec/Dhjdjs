@@ -50,4 +50,10 @@ interface DictionaryDao {
 
     @Query("SELECT * FROM dictionary_entries WHERE category = :category ORDER BY word ASC")
     fun getEntriesByCategory(category: String): Flow<List<DictionaryEntry>>
+
+    @Query("DELETE FROM dictionary_entries WHERE id = :id")
+    suspend fun deleteEntryById(id: Int)
+
+    @Query("DELETE FROM dictionary_entries WHERE isUserAdded = 1")
+    suspend fun clearUserAddedEntries()
 }

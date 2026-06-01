@@ -49,6 +49,10 @@ class MainViewModel(
     val isAiLoading = MutableStateFlow(false)
     val aiError = MutableStateFlow<String?>(null)
 
+    // --- Admin state configurations ---
+    val isAdminLoggedIn = MutableStateFlow(false)
+    val isOzhegovStrictnessEnabled = MutableStateFlow(false)
+
     // --- Database Data Sources (Reactive Flows as mandated) ---
     val allEntries: StateFlow<List<DictionaryEntry>> = repository.allEntries
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -60,6 +64,10 @@ class MainViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyUrlList())
 
     val categories: StateFlow<List<String>> = repository.categories
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val userAddedEntries: StateFlow<List<DictionaryEntry>> = repository.allEntries
+        .map { list -> list.filter { it.isUserAdded } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Helper for initial empty history list
@@ -98,6 +106,8 @@ class MainViewModel(
     init {
         // Load persisted app theme preference
         appTheme.value = prefs.getString("theme_mode", "system") ?: "system"
+        isAdminLoggedIn.value = prefs.getBoolean("admin_logged_in", false)
+        isOzhegovStrictnessEnabled.value = prefs.getBoolean("strictness_enabled", false)
 
         // Hydrate a "Word of the Day" on launch from our preseeded database words
         viewModelScope.launch {
@@ -188,6 +198,7 @@ class MainViewModel(
     }
 
     fun fetchAiDefinitionInSilence(wordStr: String) {
+        if (isOzhegovStrictnessEnabled.value) return
         viewModelScope.launch {
             try {
                 val normalized = normalizeRussianWord(wordStr)
@@ -201,7 +212,13 @@ class MainViewModel(
                         "4. Несколько примеров употребления из живого русского языка или классической литературы, оформленные курсивом (используй префикс '— ' или разметку Markdown для курсива).\n\n" +
                         "Крайне важно: не пиши никакого лишнего текста вокруг определения (не здоровайся, не пиши 'Вот определение:', 'Слово означает:' или вежливые вступления). Возвращай исключительно готовое словарное определение."
 
-                val apiKey = BuildConfig.GEMINI_API_KEY
+                var apiKey = prefs.getString("custom_gemini_api_key", null)
+                if (apiKey.isNullOrEmpty()) {
+                    apiKey = BuildConfig.GEMINI_API_KEY
+                }
+                if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+                    return@launch
+                }
                 val request = GeneratedContentRequest(
                     contents = listOf(Content(parts = listOf(Part(text = prompt)))),
                     systemInstruction = Content(parts = listOf(Part(text = sysInstruction))),
@@ -284,6 +301,10 @@ class MainViewModel(
         
         viewModelScope.launch {
             try {
+                if (isOzhegovStrictnessEnabled.value) {
+                    throw IllegalStateException("Обращение к ИИ-Толкователю временно ограничено администратором в настройках строгости словаря. Доступен только классический офлайн-поиск.")
+                }
+
                 // 1. Check if we already have it locally
                 val normalized = normalizeRussianWord(wordStr)
                 val existing = repository.getEntryByNormalizedWord(normalized)
@@ -305,7 +326,10 @@ class MainViewModel(
                         "4. Несколько примеров употребления из живого русского языка или классической литературы, оформленные курсивом (используй префикс '— ' или разметку Markdown для курсива).\n\n" +
                         "Крайне важно: не пиши никакого лишнего текста вокруг определения (не здоровайся, не пиши 'Вот определение:', 'Слово означает:' или вежливые вступления). Возвращай исключительно готовое словарное определение."
 
-                val apiKey = BuildConfig.GEMINI_API_KEY
+                var apiKey = prefs.getString("custom_gemini_api_key", null)
+                if (apiKey.isNullOrEmpty()) {
+                    apiKey = BuildConfig.GEMINI_API_KEY
+                }
                 if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
                     throw IllegalStateException("API ключ Gemini не настроен. Пожалуйста, укажите действующий ключ GEMINI_API_KEY в панели Secrets во вкладке настроек Google AI Studio.")
                 }
@@ -497,6 +521,84 @@ class MainViewModel(
                 importStatus.value = "Ошибка при импорте: ${e.localizedMessage ?: "Неизвестная ошибка"}"
             } finally {
                 importProgress.value = false
+            }
+        }
+    }
+
+    // --- Admin Operations ---
+    fun logInAdmin(password: String): Boolean {
+        // Admin password check (supports 'admin' or custom 'ожегов2026')
+        val isSuccess = password.trim() == "admin" || password.trim() == "ожегов2026"
+        if (isSuccess) {
+            isAdminLoggedIn.value = true
+            prefs.edit().putBoolean("admin_logged_in", true).apply()
+        }
+        return isSuccess
+    }
+
+    fun logOutAdmin() {
+        isAdminLoggedIn.value = false
+        prefs.edit().putBoolean("admin_logged_in", false).apply()
+    }
+
+    fun setStrictnessMode(enabled: Boolean) {
+        isOzhegovStrictnessEnabled.value = enabled
+        prefs.edit().putBoolean("strictness_enabled", enabled).apply()
+    }
+
+    fun setCustomApiKey(key: String) {
+        prefs.edit().putString("custom_gemini_api_key", key.trim().takeIf { it.isNotBlank() }).apply()
+    }
+
+    fun getCustomApiKey(): String {
+        return prefs.getString("custom_gemini_api_key", "") ?: ""
+    }
+
+    fun deleteEntryAdmin(id: Int) {
+        viewModelScope.launch {
+            repository.deleteEntryById(id)
+            if (selectedWord.value?.id == id) {
+                selectedWord.value = null
+            }
+        }
+    }
+
+    fun clearAllUserWordsAdmin() {
+        viewModelScope.launch {
+            repository.clearUserAddedEntries()
+        }
+    }
+
+    fun saveUserWord(word: String, definition: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        if (word.isBlank() || definition.isBlank()) {
+            onError("Слово и толкование не могут быть пустыми")
+            return
+        }
+        val cleanedWord = word.trim().uppercase(Locale.getDefault())
+        val normQuery = normalizeRussianWord(cleanedWord)
+        
+        viewModelScope.launch {
+            try {
+                val existing = repository.getEntryByNormalizedWord(normQuery)
+                if (existing != null) {
+                    onError("Слово «$cleanedWord» уже существует в словаре")
+                    return@launch
+                }
+                
+                val firstLetter = cleanedWord.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А"
+                val newEntry = DictionaryEntry(
+                    word = cleanedWord,
+                    normalizedWord = normQuery,
+                    category = firstLetter,
+                    definition = definition.trim(),
+                    isUserAdded = true,
+                    lastViewedTimestamp = System.currentTimeMillis()
+                )
+                repository.insertEntry(newEntry)
+                onSuccess()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError(e.localizedMessage ?: "Неизвестная ошибка")
             }
         }
     }

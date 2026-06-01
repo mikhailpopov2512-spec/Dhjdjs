@@ -62,4 +62,12 @@ class DictionaryRepository(
     suspend fun updateEntry(entry: DictionaryEntry) {
         dao.updateEntry(entry)
     }
+
+    suspend fun deleteEntryById(id: Int) {
+        dao.deleteEntryById(id)
+    }
+
+    suspend fun clearUserAddedEntries() {
+        dao.clearUserAddedEntries()
+    }
 }
