@@ -43,6 +43,10 @@ class DictionaryRepository(
         return dao.insertEntry(entry)
     }
 
+    suspend fun insertEntries(entries: List<DictionaryEntry>) {
+        dao.insertEntries(entries)
+    }
+
     suspend fun updateFavoriteStatus(id: Int, isFavorite: Boolean) {
         dao.updateFavoriteStatus(id, isFavorite)
     }

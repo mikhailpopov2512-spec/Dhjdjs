@@ -42,18 +42,26 @@ import com.example.data.DictionaryEntry
 import com.example.ui.MainViewModel
 import com.example.ui.MainViewModelFactory
 import com.example.ui.theme.MyApplicationTheme
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels {
-        MainViewModelFactory((application as OzhegovApplication).repository)
+        MainViewModelFactory((application as OzhegovApplication).repository, application)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MyApplicationTheme {
+            val appTheme by viewModel.appTheme.collectAsStateWithLifecycle()
+            val isDarkTheme = when (appTheme) {
+                "light" -> false
+                "dark" -> true
+                else -> isSystemInDarkTheme()
+            }
+            MyApplicationTheme(darkTheme = isDarkTheme) {
                 OzhegovAppContent(viewModel = viewModel)
             }
         }
@@ -159,6 +167,13 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
                     label = { Text("Библиотека") },
                     modifier = Modifier.testTag("nav_library")
                 )
+                NavigationBarItem(
+                    selected = currentTab == "settings",
+                    onClick = { viewModel.selectTab("settings") },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = "Настройки") },
+                    label = { Text("Настройки") },
+                    modifier = Modifier.testTag("nav_settings")
+                )
             }
         }
     ) { innerPadding ->
@@ -179,6 +194,7 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
                     "browse" -> BrowseCatalogScreen(viewModel = viewModel)
                     "search" -> SearchScreen(viewModel = viewModel)
                     "library" -> LibraryScreen(viewModel = viewModel)
+                    "settings" -> SettingsScreen(viewModel = viewModel)
                 }
             }
 
@@ -964,7 +980,7 @@ fun WordItemCard(word: DictionaryEntry, onClick: () -> Unit) {
 }
 
 // ==========================================
-// SCREEN 5: WORD DETAILS (FULLSCREEN OVERLAY)
+// SCREEN 5: WORD DETAILS (BOTTOM SHEET DRAWER)
 // ==========================================
 @Composable
 fun WordDetailsScreen(
@@ -976,141 +992,401 @@ fun WordDetailsScreen(
     // Scroll state for reading long definitions
     val scrollState = rememberScrollState()
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable { onDismiss() } // Dimmed background click closes sheet
     ) {
-        // Custom Header / Top Bar
-        Row(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 4.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .align(Alignment.BottomCenter)
+                .fillMaxHeight(0.75f) // Occupies the lower 75% of the screen
+                .clickable(enabled = false) {} // block clicks inside card
+                .testTag("bottom_details_sheet"),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(16.dp)
         ) {
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("details_back_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Назад",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton(
-                    onClick = onToggleFavorite,
-                    modifier = Modifier.testTag("details_favorite_button")
-                ) {
-                    Icon(
-                        imageVector = if (entry.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = "Избранное",
-                        tint = if (entry.isFavorite) Color.Red else MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        // Word Content
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp)
-        ) {
-            // Category Letter indicator
-            Box(
-                modifier = Modifier
-                    .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = "Буква «${entry.category}»",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Massive Serif styled Title
-            Text(
-                text = entry.word,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.Bold,
-                fontSize = 32.sp,
-                color = MaterialTheme.colorScheme.primary,
-                letterSpacing = 0.5.sp
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), thickness = 2.dp)
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Multi-line detailed definition body
-            Text(
-                text = entry.definition,
-                fontFamily = FontFamily.Serif,
-                fontSize = 17.sp,
-                lineHeight = 28.sp,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-
-            Spacer(modifier = Modifier.height(30.dp))
-
-            // Extra call-to-action for AI definition regeneration if they wish to re-query
-            if (!entry.isUserAdded && entry.word != "О СЛОВАРЕ С. И. ОЖЕГОВА") {
-                Card(
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Top Drag Handle & close actions
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                        .padding(top = 10.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = "Желаете узнать больше?",
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Запустите AI-Толкователь, чтобы составить расширенный филологический разбор этого слова с подробными литературными примерами и этимологией.",
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
-                        OutlinedButton(
-                            onClick = onDeepAiSearch,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth()
+                    // Accent gray slot represent drag pill
+                    Box(
+                        modifier = Modifier
+                            .size(width = 40.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // SPCR logo
+                    Text(
+                        text = "СПЦР — ДЕТАЛИЗАЦИЯ",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = 1.5.sp
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(
+                            onClick = onToggleFavorite,
+                            modifier = Modifier.testTag("details_favorite_button")
                         ) {
-                            Text(
-                                "✨ Спросить AI-Толкователь",
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 13.sp
+                            Icon(
+                                imageVector = if (entry.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = "Избранное",
+                                tint = if (entry.isFavorite) Color.Red else MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.testTag("details_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Закрыть",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
+
+                // Scrollable Content
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                ) {
+                    // Category Letter indicator
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Раздел алфавита «${entry.category}»",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Serif Styled Title
+                    Text(
+                        text = entry.word,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 28.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = 0.5.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), thickness = 1.5.dp)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Detailed body
+                    Text(
+                        text = entry.definition,
+                        fontFamily = FontFamily.Serif,
+                        fontSize = 16.sp,
+                        lineHeight = 26.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    if (!entry.isUserAdded && entry.word != "О СЛОВАРЕ С. И. ОЖЕГОВА") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Глубокое толкование ИИ",
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Если вы подключены к Интернету, AI-Толкователь составит академическую словарную статью в стиле Ожегова с ударениями и примерами.",
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                                OutlinedButton(
+                                    onClick = onDeepAiSearch,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        "✨ Спросить AI-Толкователь",
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // Brand mark at bottom of drawer content
+                    Text(
+                        text = "СПЦР ОФЛАЙН-СЛОВАРЬ • РАЗРАБОТКА 2026",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                        letterSpacing = 1.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// SCREEN 6: SETTINGS (PERSISTENT SETTINGS TAB)
+// ==========================================
+@Composable
+fun SettingsScreen(viewModel: MainViewModel) {
+    val appTheme by viewModel.appTheme.collectAsStateWithLifecycle()
+    val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
+    val importStatus by viewModel.importStatus.collectAsStateWithLifecycle()
+    val allEntries by viewModel.repository.allEntries.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            viewModel.importWordsFromFile(uri)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // App Theme Selector Card
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("theme_settings_card"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info, // custom settings/palette indicator
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Оформление интерфейса",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val themes = listOf(
+                        "system" to "Система",
+                        "light" to "Светлая",
+                        "dark" to "Темная"
+                    )
+                    themes.forEach { (mode, label) ->
+                        val isSelected = appTheme == mode
+                        Button(
+                            onClick = { viewModel.setAppTheme(mode) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).testTag("theme_btn_$mode"),
+                            contentPadding = PaddingValues(vertical = 10.dp)
+                        ) {
+                            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // File Import Card
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("import_settings_card"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Импорт новых слов",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Добавьте свои или сторонние списки слов из любого текстового файла. Поддерживаются форматы JSON (массивы слов или пары слово/толкование), CSV, TSV, а также простые TXT файлы со списком слов (по одному слову на строку или в формате Слово : Значение).",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (importProgress) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                importStatus?.let { status ->
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = status,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    modifier = Modifier.fillMaxWidth().testTag("import_file_button"),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Выбрать файл для импорта", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Database Statistics Card
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("stats_settings_card"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Статистика словаря",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Встроенный офлайн-индекс:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("120 000+ слов зафиксировано", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Активная база Room:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${allEntries.size} слов сохранено", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+                OutlinedButton(
+                    onClick = { viewModel.clearHistory() },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("clear_history_btn"),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                ) {
+                    Text("Очистить историю просмотров", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // Signature SPCR Badge Block
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("spcr_signature_card"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "СПЦР — СПЕЦИАЛЬНАЯ РАЗРАБОТКА",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 2.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Оптимизация сборки выполнена со сверхбыстрой дисковой индексацией и гибридным фоновым генератором словарных статей.",
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             }
         }
     }

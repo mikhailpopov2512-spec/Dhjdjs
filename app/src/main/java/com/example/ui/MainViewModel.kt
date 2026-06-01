@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -15,7 +16,14 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class MainViewModel(private val repository: DictionaryRepository) : ViewModel() {
+class MainViewModel(
+    val repository: DictionaryRepository,
+    private val application: android.app.Application
+) : ViewModel() {
+
+    private val prefs by lazy {
+        application.getSharedPreferences("ozhegov_settings", Context.MODE_PRIVATE)
+    }
 
     // --- Search & Filtering State ---
     val searchQuery = MutableStateFlow("")
@@ -29,6 +37,13 @@ class MainViewModel(private val repository: DictionaryRepository) : ViewModel() 
 
     // --- active UI Tab: "dashboard", "browse", "favorites", "history" ---
     val currentTab = MutableStateFlow("dashboard")
+
+    // --- App Theme State ---
+    val appTheme = MutableStateFlow("system")
+
+    // --- Import Word States ---
+    val importProgress = MutableStateFlow(false)
+    val importStatus = MutableStateFlow<String?>(null)
 
     // --- AI Definition Resolution States ---
     val isAiLoading = MutableStateFlow(false)
@@ -81,6 +96,9 @@ class MainViewModel(private val repository: DictionaryRepository) : ViewModel() 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        // Load persisted app theme preference
+        appTheme.value = prefs.getString("theme_mode", "system") ?: "system"
+
         // Hydrate a "Word of the Day" on launch from our preseeded database words
         viewModelScope.launch {
             repository.allEntries.firstOrNull()?.let { list ->
@@ -329,6 +347,160 @@ class MainViewModel(private val repository: DictionaryRepository) : ViewModel() 
         }
     }
 
+    fun setAppTheme(mode: String) {
+        appTheme.value = mode
+        prefs.edit().putString("theme_mode", mode).apply()
+    }
+
+    fun importWordsFromFile(uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            importProgress.value = true
+            importStatus.value = "Чтение файла..."
+            try {
+                val context = application.applicationContext
+                val inputStream = context.contentResolver.openInputStream(uri)
+                if (inputStream == null) {
+                    importStatus.value = "Ошибка: не удалось открыть файл"
+                    importProgress.value = false
+                    return@launch
+                }
+                
+                val content = inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }.trim()
+                val parsedEntries = mutableListOf<DictionaryEntry>()
+                
+                // Try JSON parsing first
+                if (content.startsWith("[") || content.startsWith("{")) {
+                    try {
+                        if (content.startsWith("[")) {
+                            // JSON Array pattern: [{"word": "Привет", "definition": "мир"}, ...]
+                            val jsonArrayRegex = """\{\s*"word"\s*:\s*"([^"]+)"\s*,\s*"definition"\s*:\s*"([^"]+)"\s*\}""".toRegex(RegexOption.IGNORE_CASE)
+                            val matches = jsonArrayRegex.findAll(content).toList()
+                            if (matches.isNotEmpty()) {
+                                matches.forEach { match ->
+                                    val word = match.groupValues[1]
+                                    val definition = match.groupValues[2]
+                                    val cleaned = word.trim()
+                                    if (cleaned.isNotEmpty()) {
+                                        parsedEntries.add(
+                                            DictionaryEntry(
+                                                word = cleaned.uppercase(Locale.getDefault()),
+                                                normalizedWord = normalizeRussianWord(cleaned),
+                                                definition = definition.replace("\\n", "\n").replace("\\\"", "\""),
+                                                category = cleaned.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А",
+                                                isUserAdded = true
+                                            )
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Maybe flat JSON array of strings: ["космос", "озарение"]
+                                val simpleListRegex = """\"([^\"]+)\"""".toRegex()
+                                val listMatches = simpleListRegex.findAll(content).map { it.groupValues[1].trim() }.filter { it.isNotEmpty() && !it.contains(",") && !it.contains("{") && !it.contains("}") }.toList()
+                                if (listMatches.isNotEmpty()) {
+                                    listMatches.forEach { w ->
+                                        parsedEntries.add(
+                                            DictionaryEntry(
+                                                word = w.uppercase(Locale.getDefault()),
+                                                normalizedWord = normalizeRussianWord(w),
+                                                definition = generateOfflineDefinition(w),
+                                                category = w.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А",
+                                                isUserAdded = true
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // JSON Object: {"слово": "описание", "мир": "описание"}
+                            val objKeyValueRegex = """\s*"([^"]+)"\s*:\s*"([^"]+)"\s*""".toRegex()
+                            val matches = objKeyValueRegex.findAll(content).toList()
+                            matches.forEach { match ->
+                                val word = match.groupValues[1].trim()
+                                val definition = match.groupValues[2].trim()
+                                if (word.isNotEmpty() && !word.startsWith("{") && !word.endsWith("}")) {
+                                    parsedEntries.add(
+                                        DictionaryEntry(
+                                            word = word.uppercase(Locale.getDefault()),
+                                            normalizedWord = normalizeRussianWord(word),
+                                            definition = definition.replace("\\n", "\n").replace("\\\"", "\""),
+                                            category = word.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А",
+                                            isUserAdded = true
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                
+                // Decode TXT or CSV if JSON parsing yielded nothing
+                if (parsedEntries.isEmpty()) {
+                    val lines = content.split("\n")
+                    for (line in lines) {
+                        val trimmedLine = line.trim()
+                        if (trimmedLine.isEmpty()) continue
+                        
+                        // Check separator: comma, semicolon, tab, hyphen or colon
+                        val separator = when {
+                            trimmedLine.contains(";") -> ";"
+                            trimmedLine.contains(",") -> ","
+                            trimmedLine.contains("\t") -> "\t"
+                            trimmedLine.contains(" - ") -> " - "
+                            trimmedLine.contains(":") -> ":"
+                            else -> null
+                        }
+                        
+                        if (separator != null) {
+                            val parts = trimmedLine.split(separator, limit = 2)
+                            val word = parts[0].trim().replace("\"", "").replace("'", "")
+                            val definition = if (parts.size > 1) parts[1].trim().replace("\"", "").replace("'", "") else ""
+                            if (word.isNotEmpty() && word.length < 50) {
+                                parsedEntries.add(
+                                    DictionaryEntry(
+                                        word = word.uppercase(Locale.getDefault()),
+                                        normalizedWord = normalizeRussianWord(word),
+                                        definition = if (definition.isNotEmpty()) definition else generateOfflineDefinition(word),
+                                        category = word.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А",
+                                        isUserAdded = true
+                                    )
+                                )
+                            }
+                        } else {
+                            // Single word list
+                            val word = trimmedLine.replace("\"", "").replace("'", "")
+                            if (word.isNotEmpty() && word.length < 50) {
+                                parsedEntries.add(
+                                    DictionaryEntry(
+                                        word = word.uppercase(Locale.getDefault()),
+                                        normalizedWord = normalizeRussianWord(word),
+                                        definition = generateOfflineDefinition(word),
+                                        category = word.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А",
+                                        isUserAdded = true
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                if (parsedEntries.isEmpty()) {
+                    importStatus.value = "Не удалось распознать слова в файле. Проверьте формат (TXT, CSV или JSON)."
+                } else {
+                    importStatus.value = "Распознано слов: ${parsedEntries.size}. Выполняется сохранение..."
+                    repository.insertEntries(parsedEntries)
+                    importStatus.value = "Успешно импортировано слов: ${parsedEntries.size}!"
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                importStatus.value = "Ошибка при импорте: ${e.localizedMessage ?: "Неизвестная ошибка"}"
+            } finally {
+                importProgress.value = false
+            }
+        }
+    }
+
     // --- Helpers ---
     
     fun normalizeRussianWord(word: String): String {
@@ -343,11 +515,14 @@ class MainViewModel(private val repository: DictionaryRepository) : ViewModel() 
 
 // --- ViewModel Factory ---
 
-class MainViewModelFactory(private val repository: DictionaryRepository) : ViewModelProvider.Factory {
+class MainViewModelFactory(
+    private val repository: DictionaryRepository,
+    private val application: android.app.Application
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return MainViewModel(repository) as T
+            return MainViewModel(repository, application) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
