@@ -5,11 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
-import com.example.api.Content
-import com.example.api.GeminiClient
-import com.example.api.GeneratedContentRequest
-import com.example.api.Part
-import com.example.api.GenerationConfig
 import com.example.data.DictionaryEntry
 import com.example.data.DictionaryRepository
 import kotlinx.coroutines.flow.*
@@ -39,19 +34,18 @@ class MainViewModel(
     val currentTab = MutableStateFlow("dashboard")
 
     // --- App Theme State ---
-    val appTheme = MutableStateFlow("system")
+    val appTheme = MutableStateFlow("light")
+
+    // --- App Config Variables editable by Admin ---
+    val isUserWordCreationAllowed = MutableStateFlow(true)
+    val customAppTagline = MutableStateFlow("Словарь русского языка С.И. Ожегова")
 
     // --- Import Word States ---
     val importProgress = MutableStateFlow(false)
     val importStatus = MutableStateFlow<String?>(null)
 
-    // --- AI Definition Resolution States ---
-    val isAiLoading = MutableStateFlow(false)
-    val aiError = MutableStateFlow<String?>(null)
-
     // --- Admin state configurations ---
     val isAdminLoggedIn = MutableStateFlow(false)
-    val isOzhegovStrictnessEnabled = MutableStateFlow(false)
 
     // --- Database Data Sources (Reactive Flows as mandated) ---
     val allEntries: StateFlow<List<DictionaryEntry>> = repository.allEntries
@@ -105,9 +99,10 @@ class MainViewModel(
 
     init {
         // Load persisted app theme preference
-        appTheme.value = prefs.getString("theme_mode", "system") ?: "system"
+        appTheme.value = prefs.getString("theme_mode", "light") ?: "light"
         isAdminLoggedIn.value = prefs.getBoolean("admin_logged_in", false)
-        isOzhegovStrictnessEnabled.value = prefs.getBoolean("strictness_enabled", false)
+        isUserWordCreationAllowed.value = prefs.getBoolean("user_word_creation_allowed", true)
+        customAppTagline.value = prefs.getString("custom_app_tagline", "Словарь русского языка С.И. Ожегова") ?: "Словарь русского языка С.И. Ожегова"
 
         // Hydrate a "Word of the Day" on launch from our preseeded database words
         viewModelScope.launch {
@@ -164,8 +159,7 @@ class MainViewModel(
                 "Примеры употребления:\n" +
                 "— Вся офлайн-база Ожегова находится в распоряжении пользователя.\n\n" +
                 "СПЦР-СПЕЦИАЛЬНОЕ ПРИМЕЧАНИЕ:\n" +
-                "Данная статья сгенерирована локально без интернета. Всего в приложении доступно offline более 60 000 слов! " +
-                "Если вы подключены к интернету и настроили Gemini API KEY, то толковый словарь автоматически заменит это описание глубокой академической статьей с ударением, филологическими пометами литературы и ожеговскими толкованиями прямо сейчас в фоновом режиме!"
+                "Данная статья сгенерирована локально без интернета. Всего в приложении доступно offline более 60 000 слов!"
     }
 
     fun selectWord(entry: DictionaryEntry?) {
@@ -179,12 +173,6 @@ class MainViewModel(
                     val offlineDef = generateOfflineDefinition(entry.word)
                     val synthesized = entry.copy(definition = offlineDef)
                     selectedWord.value = synthesized
-                    
-                    // Asynchronously expand dictionary if internet and key are configured
-                    val apiKey = BuildConfig.GEMINI_API_KEY
-                    if (apiKey.isNotEmpty() && apiKey != "MY_GEMINI_API_KEY") {
-                        fetchAiDefinitionInSilence(entry.word)
-                    }
                 }
             }
         } else {
@@ -193,60 +181,6 @@ class MainViewModel(
                 viewModelScope.launch {
                     repository.updateLastViewedTimestamp(entry.id, System.currentTimeMillis())
                 }
-            }
-        }
-    }
-
-    fun fetchAiDefinitionInSilence(wordStr: String) {
-        if (isOzhegovStrictnessEnabled.value) return
-        viewModelScope.launch {
-            try {
-                val normalized = normalizeRussianWord(wordStr)
-                val cleanedWord = wordStr.trim().uppercase(Locale.getDefault())
-                val prompt = "Объясни значение русского слова \"$cleanedWord\". Напиши только словарное толкование в строгом ожеговском стиле."
-                val sysInstruction = "Ты — выдающийся лингвист, эксперт по русскому языку и преемником С. И. Ожегова. Твоя единственная цель — составить подробное толкование предложенного пользователем слова строго в лаконичном, академическом, толковом стиле классического Словаря Ожегова.\n\n" +
-                        "Формат ответа должен быть безупречно структурирован:\n" +
-                        "1. Заголовок слова заглавными буквами с указанием знака ударения (используй символ ударения \\u0301 сразу после ударной гласной, например: АВО́СЬ, ВЕЛИКОДУ́ШИЕ, СЧА́СТЬЕ).\n" +
-                        "2. Часть речи, изменения (например, -я, м. или -и, ж.) и стилистические пометы (например: существительное, женский род; глагол, совершенный вид, переходный; разговорное, книжное, устарелое) на новой строке.\n" +
-                        "3. Точное толкование одного или нескольких пронумерованных значений слова.\n" +
-                        "4. Несколько примеров употребления из живого русского языка или классической литературы, оформленные курсивом (используй префикс '— ' или разметку Markdown для курсива).\n\n" +
-                        "Крайне важно: не пиши никакого лишнего текста вокруг определения (не здоровайся, не пиши 'Вот определение:', 'Слово означает:' или вежливые вступления). Возвращай исключительно готовое словарное определение."
-
-                var apiKey = prefs.getString("custom_gemini_api_key", null)
-                if (apiKey.isNullOrEmpty()) {
-                    apiKey = BuildConfig.GEMINI_API_KEY
-                }
-                if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                    return@launch
-                }
-                val request = GeneratedContentRequest(
-                    contents = listOf(Content(parts = listOf(Part(text = prompt)))),
-                    systemInstruction = Content(parts = listOf(Part(text = sysInstruction))),
-                    generationConfig = GenerationConfig(temperature = 0.3f, topP = 0.95f)
-                )
-
-                val response = GeminiClient.service.generateContent(apiKey, request)
-                val responseText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-
-                if (!responseText.isNullOrBlank()) {
-                    val firstLetter = cleanedWord.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А"
-                    val newEntry = DictionaryEntry(
-                        word = cleanedWord,
-                        normalizedWord = normalized,
-                        category = firstLetter,
-                        definition = responseText.trim(),
-                        isUserAdded = true,
-                        lastViewedTimestamp = System.currentTimeMillis()
-                    )
-                    val insertedId = repository.insertEntry(newEntry)
-                    val savedEntry = newEntry.copy(id = insertedId.toInt())
-                    // If the user is still viewing this exact word, upgrade the shown details card live!
-                    if (selectedWord.value?.normalizedWord == normalized) {
-                        selectedWord.value = savedEntry
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }
     }
@@ -289,84 +223,6 @@ class MainViewModel(
                     category = wordString.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А"
                 )
                 selectWord(newVirtual)
-            }
-        }
-    }
-
-    fun fetchAiDefinition(wordStr: String) {
-        if (wordStr.isBlank()) return
-        
-        isAiLoading.value = true
-        aiError.value = null
-        
-        viewModelScope.launch {
-            try {
-                if (isOzhegovStrictnessEnabled.value) {
-                    throw IllegalStateException("Обращение к ИИ-Толкователю временно ограничено администратором в настройках строгости словаря. Доступен только классический офлайн-поиск.")
-                }
-
-                // 1. Check if we already have it locally
-                val normalized = normalizeRussianWord(wordStr)
-                val existing = repository.getEntryByNormalizedWord(normalized)
-                if (existing != null) {
-                    selectWord(existing)
-                    isAiLoading.value = false
-                    return@launch
-                }
-
-                // 2. Fetch via Gemini API REST Client
-                val cleanedWord = wordStr.trim().uppercase(Locale.getDefault())
-                val prompt = "Объясни значение русского слова \"$cleanedWord\". Напиши только словарное толкование в строгом ожеговском стиле."
-                
-                val sysInstruction = "Ты — выдающийся лингвист, эксперт по русскому языку и преемником С. И. Ожегова. Твоя единственная цель — составить подробное толкование предложенного пользователем слова строго в лаконичном, академическом, толковом стиле классического Словаря Ожегова.\n\n" +
-                        "Формат ответа должен быть безупречно структурирован:\n" +
-                        "1. Заголовок слова заглавными буквами с указанием знака ударения (используй символ ударения \\u0301 сразу после ударной гласной, например: АВО́СЬ, ВЕЛИКОДУ́ШИЕ, СЧА́СТЬЕ).\n" +
-                        "2. Часть речи, изменения (например, -я, м. или -и, ж.) и стилистические пометы (например: существительное, женский род; глагол, совершенный вид, переходный; разговорное, книжное, устарелое) на новой строке.\n" +
-                        "3. Точное толкование одного или нескольких пронумерованных значений слова.\n" +
-                        "4. Несколько примеров употребления из живого русского языка или классической литературы, оформленные курсивом (используй префикс '— ' или разметку Markdown для курсива).\n\n" +
-                        "Крайне важно: не пиши никакого лишнего текста вокруг определения (не здоровайся, не пиши 'Вот определение:', 'Слово означает:' или вежливые вступления). Возвращай исключительно готовое словарное определение."
-
-                var apiKey = prefs.getString("custom_gemini_api_key", null)
-                if (apiKey.isNullOrEmpty()) {
-                    apiKey = BuildConfig.GEMINI_API_KEY
-                }
-                if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                    throw IllegalStateException("API ключ Gemini не настроен. Пожалуйста, укажите действующий ключ GEMINI_API_KEY в панели Secrets во вкладке настроек Google AI Studio.")
-                }
-
-                val request = GeneratedContentRequest(
-                    contents = listOf(Content(parts = listOf(Part(text = prompt)))),
-                    systemInstruction = Content(parts = listOf(Part(text = sysInstruction))),
-                    generationConfig = GenerationConfig(temperature = 0.3f, topP = 0.95f)
-                )
-
-                val response = GeminiClient.service.generateContent(apiKey, request)
-                val responseText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-
-                if (!responseText.isNullOrBlank()) {
-                    // Create entry and insert to expand the dynamic dictionary offline catalog
-                    val firstLetter = cleanedWord.firstOrNull()?.toString()?.uppercase(Locale.getDefault()) ?: "А"
-                    val newEntry = DictionaryEntry(
-                        word = cleanedWord,
-                        normalizedWord = normalized,
-                        category = firstLetter,
-                        definition = responseText.trim(),
-                        isUserAdded = true,
-                        lastViewedTimestamp = System.currentTimeMillis()
-                    )
-                    
-                    val insertedId = repository.insertEntry(newEntry)
-                    val insertedEntry = newEntry.copy(id = insertedId.toInt())
-                    
-                    selectWord(insertedEntry)
-                } else {
-                    throw Exception("Не удалось получить текстовый ответ от искусственного интеллекта. Повторите запрос.")
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                aiError.value = e.localizedMessage ?: "Произошла неизвестная ошибка при обращении к AI-Переводчику"
-            } finally {
-                isAiLoading.value = false
             }
         }
     }
@@ -527,8 +383,8 @@ class MainViewModel(
 
     // --- Admin Operations ---
     fun logInAdmin(password: String): Boolean {
-        // Admin password check (supports 'admin' or custom 'ожегов2026')
-        val isSuccess = password.trim() == "admin" || password.trim() == "ожегов2026"
+        // Admin password check (supports '0000' as configured)
+        val isSuccess = password.trim() == "0000"
         if (isSuccess) {
             isAdminLoggedIn.value = true
             prefs.edit().putBoolean("admin_logged_in", true).apply()
@@ -536,22 +392,21 @@ class MainViewModel(
         return isSuccess
     }
 
+    fun setUserWordCreationAllowed(enabled: Boolean) {
+        isUserWordCreationAllowed.value = enabled
+        prefs.edit().putBoolean("user_word_creation_allowed", enabled).apply()
+    }
+
+    fun setCustomAppTagline(tagline: String) {
+        val clean = tagline.trim()
+        val text = if (clean.isBlank()) "Словарь русского языка С.И. Ожегова" else clean
+        customAppTagline.value = text
+        prefs.edit().putString("custom_app_tagline", text).apply()
+    }
+
     fun logOutAdmin() {
         isAdminLoggedIn.value = false
         prefs.edit().putBoolean("admin_logged_in", false).apply()
-    }
-
-    fun setStrictnessMode(enabled: Boolean) {
-        isOzhegovStrictnessEnabled.value = enabled
-        prefs.edit().putBoolean("strictness_enabled", enabled).apply()
-    }
-
-    fun setCustomApiKey(key: String) {
-        prefs.edit().putString("custom_gemini_api_key", key.trim().takeIf { it.isNotBlank() }).apply()
-    }
-
-    fun getCustomApiKey(): String {
-        return prefs.getString("custom_gemini_api_key", "") ?: ""
     }
 
     fun deleteEntryAdmin(id: Int) {

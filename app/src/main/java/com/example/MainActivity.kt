@@ -35,7 +35,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.shape.CircleShape
 import java.util.Locale
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.DictionaryEntry
@@ -75,17 +77,24 @@ class MainActivity : ComponentActivity() {
 fun OzhegovAppContent(viewModel: MainViewModel) {
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val selectedWord by viewModel.selectedWord.collectAsStateWithLifecycle()
-    val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
-    val aiError by viewModel.aiError.collectAsStateWithLifecycle()
+    val isAdminLoggedIn by viewModel.isAdminLoggedIn.collectAsStateWithLifecycle()
+    val isUserWordCreationAllowed by viewModel.isUserWordCreationAllowed.collectAsStateWithLifecycle()
     var showAddWordDialog by remember { mutableStateOf(false) }
+
+    var showSplash by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(2200)
+        showSplash = false
+    }
 
     // Handle back press to exit word details dynamically (BackHandler as mandated)
     BackHandler(enabled = selectedWord != null) {
         viewModel.selectWord(null)
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
@@ -138,7 +147,7 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
             )
         },
         floatingActionButton = {
-            if (currentTab != "settings") {
+            if (currentTab != "settings" && (isUserWordCreationAllowed || isAdminLoggedIn)) {
                 FloatingActionButton(
                     onClick = { showAddWordDialog = true },
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -223,34 +232,9 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
                     WordDetailsScreen(
                         entry = entry,
                         onDismiss = { viewModel.selectWord(null) },
-                        onToggleFavorite = { viewModel.toggleFavorite(entry) },
-                        onDeepAiSearch = { viewModel.fetchAiDefinition(entry.word) }
+                        onToggleFavorite = { viewModel.toggleFavorite(entry) }
                     )
                 }
-            }
-
-            // Fullscreen Loading and Quote Overlay when AI Explainer is running
-            AnimatedVisibility(
-                visible = isAiLoading,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                AiLoadingOverlay()
-            }
-
-            // Error dialog when AI retrieval fails
-            if (aiError != null) {
-                AlertDialog(
-                    onDismissRequest = { viewModel.aiError.value = null },
-                    icon = { Icon(Icons.Default.Info, contentDescription = "Ошибка", tint = MaterialTheme.colorScheme.error) },
-                    title = { Text("Ошибка ИИ", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold) },
-                    text = { Text(aiError ?: "Неизвестная ошибка") },
-                    confirmButton = {
-                        TextButton(onClick = { viewModel.aiError.value = null }) {
-                            Text("Понятно", color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                )
             }
 
             // Custom Dialog for Manual Word Addition
@@ -349,6 +333,15 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
             }
         }
     }
+
+    AnimatedVisibility(
+        visible = showSplash,
+        enter = fadeIn(),
+        exit = fadeOut(animationSpec = tween(800)) + scaleOut(targetScale = 1.25f, animationSpec = tween(800))
+    ) {
+        OzhegovSplashScreen()
+    }
+}
 }
 
 // ==========================================
@@ -357,6 +350,7 @@ fun OzhegovAppContent(viewModel: MainViewModel) {
 @Composable
 fun DashboardScreen(viewModel: MainViewModel) {
     val wordOfTheDay by viewModel.wordOfTheDay.collectAsStateWithLifecycle()
+    val customAppTagline by viewModel.customAppTagline.collectAsStateWithLifecycle()
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     var inputWord by remember { mutableStateOf("") }
@@ -387,7 +381,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Желаем приятного погружения в глубину родного русского языка.",
+                    text = customAppTagline,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -466,105 +460,6 @@ fun DashboardScreen(viewModel: MainViewModel) {
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-        }
-
-        // AI Explainer input container
-        item {
-            Text(
-                text = "AI-Толкователь",
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Любые слова русского языка",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Text(
-                        text = "Введите абсолютно любое слово (например: космос, косолапый, суета, озарение), и искусственный интеллект мгновенно составит подробное толкование в академическом стиле Ожегова.",
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                    )
-
-                    OutlinedTextField(
-                        value = inputWord,
-                        onValueChange = { inputWord = it },
-                        placeholder = { Text("Напр: верификация, простор...") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("dashboard_ai_input"),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = {
-                            if (inputWord.isNotBlank()) {
-                                keyboardController?.hide()
-                                focusManager.clearFocus()
-                                viewModel.fetchAiDefinition(inputWord)
-                            }
-                        }),
-                        trailingIcon = {
-                            if (inputWord.isNotBlank()) {
-                                IconButton(onClick = { inputWord = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Очистить")
-                                }
-                            }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                        )
-                    )
-
-                    Button(
-                        onClick = {
-                            if (inputWord.isNotBlank()) {
-                                keyboardController?.hide()
-                                focusManager.clearFocus()
-                                viewModel.fetchAiDefinition(inputWord)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("ai_search_button"),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = "Сгенерировать толкование ИИ",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
                         )
                     }
                 }
@@ -776,7 +671,7 @@ fun SearchScreen(viewModel: MainViewModel) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Поиск мгновенно просматривает офлайн-коллекцию. Если такого слова там нет, вы сможете в один клик сгенерировать толкование ИИ.",
+                        text = "Поиск мгновенно просматривает офлайн-коллекцию русского языка.",
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
                         lineHeight = 18.sp,
@@ -786,65 +681,30 @@ fun SearchScreen(viewModel: MainViewModel) {
             }
         } else {
             if (searchResults.isEmpty()) {
-                // Word not found warning -> Offer AI Generation button:
+                // Simple elegant empty placeholder when word is not in database
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    contentAlignment = Alignment.TopCenter
+                    contentAlignment = Alignment.Center
                 ) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp)
-                            .testTag("no_offline_found_card"),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(24.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Text(
-                                text = "«${searchQuery.uppercase(Locale.getDefault())}» отсутствует в офлайне",
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
-                            Text(
-                                text = "Наш ИИ-Толкователь на базе Gemini 3.5 Flash может мгновенно сгенерировать точное академическое толкование для этого слова, и оно навсегда сохранится в вашем словаре!",
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Button(
-                                onClick = {
-                                    keyboardController?.hide()
-                                    viewModel.fetchAiDefinition(searchQuery)
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("generate_not_found_word_ai"),
-                            ) {
-                                Text(
-                                    text = "✨ Получить AI-Толкование",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Ничего не найдено",
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        )
+                        Text(
+                            text = "Слово «${searchQuery.uppercase(Locale.getDefault())}» не найдено в словаре.",
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             } else {
@@ -1062,7 +922,7 @@ fun WordItemCard(word: DictionaryEntry, onClick: () -> Unit) {
                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text(
-                                "ИИ",
+                                "Своё",
                                 color = MaterialTheme.colorScheme.primary,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -1096,8 +956,7 @@ fun WordItemCard(word: DictionaryEntry, onClick: () -> Unit) {
 fun WordDetailsScreen(
     entry: DictionaryEntry,
     onDismiss: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onDeepAiSearch: () -> Unit
+    onToggleFavorite: () -> Unit
 ) {
     // Scroll state for reading long definitions
     val scrollState = rememberScrollState()
@@ -1232,48 +1091,6 @@ fun WordDetailsScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    if (!entry.isUserAdded && entry.word != "О СЛОВАРЕ С. И. ОЖЕГОВА") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text(
-                                    text = "Глубокое толкование ИИ",
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "Если вы подключены к Интернету, AI-Толкователь составит академическую словарную статью в стиле Ожегова с ударениями и примерами.",
-                                    fontSize = 13.sp,
-                                    lineHeight = 18.sp,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                )
-                                OutlinedButton(
-                                    onClick = onDeepAiSearch,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        "✨ Спросить AI-Толкователь",
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     // Brand mark at bottom of drawer content
@@ -1304,12 +1121,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val importStatus by viewModel.importStatus.collectAsStateWithLifecycle()
     val allEntries by viewModel.repository.allEntries.collectAsStateWithLifecycle(initialValue = emptyList())
     val isAdminLoggedIn by viewModel.isAdminLoggedIn.collectAsStateWithLifecycle()
-    val isOzhegovStrictnessEnabled by viewModel.isOzhegovStrictnessEnabled.collectAsStateWithLifecycle()
     val userAddedEntries by viewModel.userAddedEntries.collectAsStateWithLifecycle()
+    val isUserWordCreationAllowed by viewModel.isUserWordCreationAllowed.collectAsStateWithLifecycle()
+    val customAppTagline by viewModel.customAppTagline.collectAsStateWithLifecycle()
 
     var adminPasswordInput by remember { mutableStateOf("") }
     var loginErrorMsg by remember { mutableStateOf<String?>(null) }
-    var customApiKeyInput by remember { mutableStateOf(viewModel.getCustomApiKey()) }
+    var editTaglineInput by remember(customAppTagline) { mutableStateOf(customAppTagline) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1509,7 +1327,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
 
                 if (!isAdminLoggedIn) {
                     Text(
-                        text = "Вход в защищенный режим администрирования для детальной конфигурации ИИ-Толкователя и прямого управления базой данных (Пароль по умолчанию: admin).",
+                        text = "Вход в защищенный режим администрирования для детальной настройки параметров приложения и прямого управления базой данных.",
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1545,7 +1363,6 @@ fun SettingsScreen(viewModel: MainViewModel) {
                             val success = viewModel.logInAdmin(adminPasswordInput)
                             if (success) {
                                 adminPasswordInput = ""
-                                customApiKeyInput = viewModel.getCustomApiKey()
                                 loginErrorMsg = null
                             } else {
                                 loginErrorMsg = "Неверный пароль администратора. Попробуйте еще раз."
@@ -1567,76 +1384,85 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // 1. Strictness Switch
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Строгий режим С.И. Ожегова",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = "Запрещает генерацию определений с помощью ИИ. Допускается только классическая офлайн-база.",
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = isOzhegovStrictnessEnabled,
-                            onCheckedChange = { viewModel.setStrictnessMode(it) },
-                            modifier = Modifier.testTag("admin_strictness_switch")
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // 2. Custom API Key input
+                    // --- App Configuration Section ---
                     Text(
-                        text = "Секретный API Ключ Gemini",
+                        text = "Конфигурация приложения",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    Text(
-                        text = "Позволяет переопределить API ключ ИИ-Толкователя без пересборки приложения.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = customApiKeyInput,
-                        onValueChange = { customApiKeyInput = it },
-                        placeholder = { Text("AIzaSy...") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("admin_custom_api_key_field")
-                    )
-
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Button(
-                        onClick = {
-                            viewModel.setCustomApiKey(customApiKeyInput)
-                        },
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                        modifier = Modifier.fillMaxWidth().testTag("admin_save_api_key_btn")
+                    // Permit writing words switch
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.background)
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Сохранить ключ в памяти", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Разрешить добавление слов пользователями",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Позволяет обычным пользователям вручную пополнять базу слов через FAB.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = isUserWordCreationAllowed,
+                            onCheckedChange = { viewModel.setUserWordCreationAllowed(it) },
+                            modifier = Modifier.testTag("admin_allow_user_add_word_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Custom Welcome Tagline
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Приветственный слоган (Таглайн) на главном экране",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        OutlinedTextField(
+                            value = editTaglineInput,
+                            onValueChange = { editTaglineInput = it },
+                            placeholder = { Text("Введите слоган...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("admin_tagline_field"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        )
+                        Button(
+                            onClick = {
+                                viewModel.setCustomAppTagline(editTaglineInput)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                            modifier = Modifier.align(Alignment.End).testTag("admin_save_tagline_btn")
+                        ) {
+                            Text("Сохранить слоган", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 3. User Word Moderation Section
+                    // 1. User Word Moderation Section
                     Text(
                         text = "Модерация пользовательской базы",
                         fontWeight = FontWeight.Bold,
@@ -1644,7 +1470,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = "Добавлено слов вручную или через ИИ: ${userAddedEntries.size}. Ниже вы можете удалять добавленные слова из базы.",
+                        text = "Добавлено слов вручную: ${userAddedEntries.size}. Ниже вы можете удалять добавленные слова из базы.",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp)
@@ -1850,6 +1676,132 @@ fun AiLoadingOverlay() {
                     color = MaterialTheme.colorScheme.primary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(20.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun OzhegovSplashScreen() {
+    var animateStart by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        animateStart = true
+    }
+
+    val scale by animateFloatAsState(
+        targetValue = if (animateStart) 1.0f else 0.4f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "scale"
+    )
+
+    val alpha by animateFloatAsState(
+        targetValue = if (animateStart) 1.0f else 0.0f,
+        animationSpec = tween(durationMillis = 1000, easing = LinearOutSlowInEasing),
+        label = "alpha"
+    )
+
+    val textAlpha by animateFloatAsState(
+        targetValue = if (animateStart) 1.0f else 0.0f,
+        animationSpec = tween(durationMillis = 1200, delayMillis = 440, easing = FastOutSlowInEasing),
+        label = "textAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.surface
+                    )
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            // Emblem Circle
+            Box(
+                modifier = Modifier
+                    .size(140.dp)
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        alpha = alpha
+                    )
+                    .border(
+                        BorderStroke(4.dp, MaterialTheme.colorScheme.primary),
+                        CircleShape
+                    )
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "О",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 72.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            // Book titles
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.graphicsLayer(alpha = textAlpha)
+            ) {
+                Text(
+                    text = "СЛОВАРЬ ОЖЕГОВА",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,
+                    letterSpacing = 4.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Толковый словарь русского языка",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    letterSpacing = 1.sp
+                )
+
+                Spacer(modifier = Modifier.height(48.dp))
+
+                // Elegant subtle loading progress
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "Офлайн-коллекция • Более 120 000 слов",
+                    fontSize = 11.sp,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center
                 )
             }
         }
